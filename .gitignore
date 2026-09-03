@@ -1,0 +1,22 @@
+## .NET
+bin/
+obj/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+
+## Test / Coverage
+TestResults/
+coverage/
+
+## Logs
+*.log
+
+## OS
+.DS_Store
+Thumbs.db
+
+# Uploaded documents / runtime storage
+AsyncDocumentProcessing.Api/Storage/

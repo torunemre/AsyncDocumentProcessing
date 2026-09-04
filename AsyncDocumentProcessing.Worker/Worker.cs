@@ -1,99 +1,203 @@
 using AsyncDocumentProcessing.Application.Interfaces;
-using AsyncDocumentProcessing.Domain.Enums;
-using AsyncDocumentProcessing.Infrastructure.Persistence.Repositories;
+using AsyncDocumentProcessing.Application.Options;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
-namespace AsyncDocumentProcessing.Worker
+namespace AsyncDocumentProcessing.Worker;
+
+public class Worker : BackgroundService
 {
-    public class Worker : BackgroundService
+    private static readonly TimeSpan StaleProcessingTimeout =
+        TimeSpan.FromMinutes(10);
+
+    private static readonly TimeSpan StaleRecoveryInterval =
+        TimeSpan.FromMinutes(1);
+
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ILogger<Worker> _logger;
+    private readonly DocumentProcessingOptions _options;
+
+    public Worker(
+        IServiceScopeFactory scopeFactory,
+        IOptions<DocumentProcessingOptions> options,
+        ILogger<Worker> logger)
     {
-        private readonly IDocumentQueue _documentQueue;
-        private readonly ILogger<Worker> _logger;
-        private readonly IDocumentRepository _documentRepository;
+        _scopeFactory = scopeFactory;
+        _options = options.Value;
+        _logger = logger;
+    }
 
-        public Worker(
-    IDocumentQueue documentQueue,
-    IDocumentRepository documentRepository,
-    ILogger<Worker> logger)
+    protected override async Task ExecuteAsync(
+        CancellationToken stoppingToken)
+    {
+        _logger.LogInformation(
+            "Document Worker started. MaxConcurrency: {MaxConcurrency}",
+            _options.MaxConcurrency);
+
+        var nextRecoveryAt = DateTime.UtcNow;
+
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _documentQueue = documentQueue;
-            _documentRepository = documentRepository;
-            _logger = logger;
-        }
-
-        protected override async Task ExecuteAsync(
-            CancellationToken stoppingToken)
-        {
-            _logger.LogInformation("Document Worker started.");
-
-            while (!stoppingToken.IsCancellationRequested)
+            try
             {
-                try
+                if (DateTime.UtcNow >= nextRecoveryAt)
                 {
-                    var documentId = await _documentQueue.DequeueAsync(
+                    await RecoverStaleDocumentsAsync(stoppingToken);
+
+                    nextRecoveryAt =
+                        DateTime.UtcNow + StaleRecoveryInterval;
+                }
+
+                IReadOnlyList<Guid> pendingDocumentIds;
+
+                using (var scope = _scopeFactory.CreateScope())
+                {
+                    var documentRepository =
+                        scope.ServiceProvider
+                            .GetRequiredService<IDocumentRepository>();
+
+                    var pendingDocuments =
+                        await documentRepository.GetPendingAsync(
+                            stoppingToken);
+
+                    pendingDocumentIds =
+                        pendingDocuments
+                            .Select(x => x.Id)
+                            .ToList();
+
+                    _logger.LogInformation(
+                        "Pending document count: {Count}",
+                        pendingDocumentIds.Count);
+                }
+
+                if (pendingDocumentIds.Count == 0)
+                {
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(2),
                         stoppingToken);
 
-                    await ProcessDocumentAsync(
-    documentId,
-    stoppingToken);
+                    continue;
                 }
-                catch (OperationCanceledException)
-                    when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(
-                        ex,
-                        "An error occurred while processing the document queue.");
-                }
-            }
 
-            _logger.LogInformation("Document Worker stopped.");
+                await Parallel.ForEachAsync(
+                    pendingDocumentIds,
+                    new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism =
+                            Math.Max(1, _options.MaxConcurrency),
+
+                        CancellationToken =
+                            stoppingToken
+                    },
+                    async (documentId, cancellationToken) =>
+                    {
+                        await ProcessDocumentAsync(
+                            documentId,
+                            cancellationToken);
+                    });
+            }
+            catch (OperationCanceledException)
+                when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "An error occurred while running the document worker.");
+
+                await Task.Delay(
+                    TimeSpan.FromSeconds(2),
+                    stoppingToken);
+            }
         }
 
-        private async Task ProcessDocumentAsync(
-    Guid documentId,
-    CancellationToken cancellationToken)
-        {
-            var document = await _documentRepository.GetByIdAsync(
+        _logger.LogInformation(
+            "Document Worker stopped.");
+    }
+
+    private async Task ProcessDocumentAsync(
+        Guid documentId,
+        CancellationToken cancellationToken)
+    {
+        using var scope = _scopeFactory.CreateScope();
+
+        var documentRepository =
+            scope.ServiceProvider
+                .GetRequiredService<IDocumentRepository>();
+
+        var documentProcessor =
+            scope.ServiceProvider
+                .GetRequiredService<IDocumentProcessor>();
+
+        var processingStartedAt = DateTime.UtcNow;
+
+        var claimed =
+            await documentRepository.TryClaimAsync(
                 documentId,
+                processingStartedAt,
                 cancellationToken);
 
-            if (document is null)
-            {
-                _logger.LogWarning(
-                    "Document not found: {DocumentId}",
-                    documentId);
-
-                return;
-            }
-
-            document.Status = DocumentStatus.Processing;
-            document.ProcessingStartedAt = DateTime.UtcNow;
-
-            await _documentRepository.UpdateAsync(
-                document,
-                cancellationToken);
-
-            _logger.LogInformation(
-                "Document processing started: {DocumentId}",
+        if (!claimed)
+        {
+            _logger.LogDebug(
+                "Document could not be claimed because it is no longer pending: {DocumentId}",
                 documentId);
 
-            // Gerçek document processing/OCR iþlemi
-            // bir sonraki aþamada buraya gelecek.
+            return;
+        }
 
-            document.Status = DocumentStatus.Completed;
-            document.CompletedAt = DateTime.UtcNow;
+        _logger.LogInformation(
+            "Document claimed for processing: {DocumentId}",
+            documentId);
 
-            await _documentRepository.UpdateAsync(
-                document,
+        try
+        {
+            await documentProcessor.ProcessAsync(
+                documentId,
                 cancellationToken);
 
             _logger.LogInformation(
                 "Document processing completed: {DocumentId}",
                 documentId);
         }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Document processing failed after retries: {DocumentId}",
+                documentId);
+        }
+    }
 
+    private async Task RecoverStaleDocumentsAsync(
+        CancellationToken cancellationToken)
+    {
+        var staleBefore =
+            DateTime.UtcNow - StaleProcessingTimeout;
+
+        using var scope = _scopeFactory.CreateScope();
+
+        var documentRepository =
+            scope.ServiceProvider
+                .GetRequiredService<IDocumentRepository>();
+
+        var recoveredCount =
+            await documentRepository.RecoverStaleProcessingAsync(
+                staleBefore,
+                cancellationToken);
+
+        if (recoveredCount > 0)
+        {
+            _logger.LogWarning(
+                "Recovered {RecoveredCount} stale processing documents.",
+                recoveredCount);
+        }
     }
 }

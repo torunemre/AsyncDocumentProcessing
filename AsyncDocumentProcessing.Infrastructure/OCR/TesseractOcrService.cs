@@ -10,9 +10,12 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Tesseract;
+using System.Runtime.Versioning;
 
 namespace AsyncDocumentProcessing.Infrastructure.OCR
 {
+
+    [SupportedOSPlatform("windows")]
     public class TesseractOcrService : IOcrService
     {
         private readonly string _tessDataPath;
@@ -46,9 +49,9 @@ namespace AsyncDocumentProcessing.Infrastructure.OCR
                     $"Tesseract tessdata klasörü bulunamadı: {_tessDataPath}");
             }
 
-            fileExtension = fileExtension?
-                .Trim()
-                .ToLowerInvariant();
+            var normalizedExtension = fileExtension?
+    .Trim()
+    .ToLowerInvariant() ?? string.Empty;
 
             var supportedExtensions = new[]
             {

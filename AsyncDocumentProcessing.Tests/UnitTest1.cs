@@ -1,4 +1,3 @@
-
 using AsyncDocumentProcessing.Application.DTOs;
 using AsyncDocumentProcessing.Application.Interfaces;
 using AsyncDocumentProcessing.Application.Services;
@@ -11,17 +10,16 @@ namespace AsyncDocumentProcessing.Tests
     public class UnitTest1
     {
         [Fact]
-        public async Task UploadAsync_ShouldSaveDocumentAndEnqueueIt()
+        public async Task UploadAsync_ShouldSaveDocumentAsPending()
         {
             // Arrange
             var repository = new FakeDocumentRepository();
             var fileStorage = new FakeFileStorage();
-            var queue = new FakeDocumentQueue();
 
-            var service = new DocumentService(
-                repository,
-                fileStorage,
-                queue);
+
+        var service = new DocumentService(
+            repository,
+            fileStorage);
 
             var request = new UploadDocumentRequest
             {
@@ -43,6 +41,7 @@ namespace AsyncDocumentProcessing.Tests
             Assert.NotEqual(Guid.Empty, result.TrackingId);
 
             Assert.NotNull(repository.AddedDocument);
+
             Assert.Equal(
                 result.TrackingId,
                 repository.AddedDocument!.Id);
@@ -58,10 +57,6 @@ namespace AsyncDocumentProcessing.Tests
             Assert.Equal(
                 "BATCH-001",
                 repository.AddedDocument.BatchId);
-
-            Assert.Equal(
-                result.TrackingId,
-                queue.EnqueuedDocumentId);
         }
 
         [Fact]
@@ -93,12 +88,10 @@ namespace AsyncDocumentProcessing.Tests
             };
 
             var fileStorage = new FakeFileStorage();
-            var queue = new FakeDocumentQueue();
 
             var service = new DocumentService(
                 repository,
-                fileStorage,
-                queue);
+                fileStorage);
 
             // Act
             var result = await service.GetByIdAsync(documentId);
@@ -128,12 +121,10 @@ namespace AsyncDocumentProcessing.Tests
             };
 
             var fileStorage = new FakeFileStorage();
-            var queue = new FakeDocumentQueue();
 
             var service = new DocumentService(
                 repository,
-                fileStorage,
-                queue);
+                fileStorage);
 
             // Act
             var result = await service.GetByIdAsync(Guid.NewGuid());
@@ -147,29 +138,29 @@ namespace AsyncDocumentProcessing.Tests
         {
             // Arrange
             var documents = new List<Document>
+        {
+            new Document
             {
-                new Document
-                {
-                    Id = Guid.NewGuid(),
-                    FileName = "document1.pdf",
-                    DocumentType = "pdf",
-                    Status = DocumentStatus.Completed,
-                    PageCount = 2,
-                    WordCount = 50,
-                    CreatedAt = DateTime.UtcNow,
-                    CompletedAt = DateTime.UtcNow
-                },
-                new Document
-                {
-                    Id = Guid.NewGuid(),
-                    FileName = "document2.pdf",
-                    DocumentType = "pdf",
-                    Status = DocumentStatus.Processing,
-                    PageCount = 1,
-                    WordCount = 20,
-                    CreatedAt = DateTime.UtcNow
-                }
-            };
+                Id = Guid.NewGuid(),
+                FileName = "document1.pdf",
+                DocumentType = "pdf",
+                Status = DocumentStatus.Completed,
+                PageCount = 2,
+                WordCount = 50,
+                CreatedAt = DateTime.UtcNow,
+                CompletedAt = DateTime.UtcNow
+            },
+            new Document
+            {
+                Id = Guid.NewGuid(),
+                FileName = "document2.pdf",
+                DocumentType = "pdf",
+                Status = DocumentStatus.Processing,
+                PageCount = 1,
+                WordCount = 20,
+                CreatedAt = DateTime.UtcNow
+            }
+        };
 
             var repository = new FakeDocumentRepository
             {
@@ -178,12 +169,10 @@ namespace AsyncDocumentProcessing.Tests
             };
 
             var fileStorage = new FakeFileStorage();
-            var queue = new FakeDocumentQueue();
 
             var service = new DocumentService(
                 repository,
-                fileStorage,
-                queue);
+                fileStorage);
 
             // Act
             var result = await service.GetByBatchIdAsync(
@@ -374,6 +363,49 @@ namespace AsyncDocumentProcessing.Tests
             return Task.FromResult(DocumentToReturn);
         }
 
+        public Task<IReadOnlyList<Document>> GetPendingAsync(
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(
+                (IReadOnlyList<Document>)new List<Document>());
+        }
+
+        public Task<bool> TryClaimAsync(
+    Guid documentId,
+    DateTime processingStartedAt,
+    CancellationToken cancellationToken = default)
+        {
+            if (DocumentToReturn is null ||
+                DocumentToReturn.Id != documentId ||
+                DocumentToReturn.Status != DocumentStatus.Pending)
+            {
+                return Task.FromResult(false);
+            }
+
+            DocumentToReturn.Status = DocumentStatus.Processing;
+            DocumentToReturn.ProcessingStartedAt = processingStartedAt;
+
+            return Task.FromResult(true);
+        }
+
+        public Task<int> RecoverStaleProcessingAsync(
+            DateTime staleBefore,
+            CancellationToken cancellationToken = default)
+        {
+            if (DocumentToReturn is null ||
+                DocumentToReturn.Status != DocumentStatus.Processing ||
+                DocumentToReturn.ProcessingStartedAt is null ||
+                DocumentToReturn.ProcessingStartedAt >= staleBefore)
+            {
+                return Task.FromResult(0);
+            }
+
+            DocumentToReturn.Status = DocumentStatus.Pending;
+            DocumentToReturn.ProcessingStartedAt = null;
+
+            return Task.FromResult(1);
+        }
+
         public Task AddAsync(
             Document document,
             CancellationToken cancellationToken = default)
@@ -430,9 +462,9 @@ namespace AsyncDocumentProcessing.Tests
     public class FakeOcrService : IOcrService
     {
         public Task<(string ExtractedText, int PageCount)> ProcessAsync(
-    Stream fileStream,
-    string fileExtension,
-    CancellationToken cancellationToken = default)
+            Stream fileStream,
+            string fileExtension,
+            CancellationToken cancellationToken = default)
         {
             return Task.FromResult(
                 (
@@ -442,22 +474,4 @@ namespace AsyncDocumentProcessing.Tests
         }
     }
 
-    public class FakeDocumentQueue : IDocumentQueue
-    {
-        public Guid EnqueuedDocumentId { get; private set; }
-
-        public ValueTask EnqueueAsync(
-            Guid documentId,
-            CancellationToken cancellationToken = default)
-        {
-            EnqueuedDocumentId = documentId;
-            return ValueTask.CompletedTask;
-        }
-
-        public ValueTask<Guid> DequeueAsync(
-            CancellationToken cancellationToken = default)
-        {
-            return ValueTask.FromResult(Guid.Empty);
-        }
-    }
 }

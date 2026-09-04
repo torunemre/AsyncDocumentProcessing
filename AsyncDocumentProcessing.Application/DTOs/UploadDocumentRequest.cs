@@ -8,10 +8,8 @@ namespace AsyncDocumentProcessing.Application.DTOs
 {
     public class UploadDocumentRequest
     {
-        public string DocumentType { get; set; } = string.Empty;
-
-        public string BatchId { get; set; } = string.Empty;
-
-        public string SourceSystem { get; set; } = string.Empty;
+        public string? DocumentType { get; set; }
+        public string? BatchId { get; set; }
+        public string? SourceSystem { get; set; }
     }
 }

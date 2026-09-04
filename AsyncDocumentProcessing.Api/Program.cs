@@ -1,4 +1,4 @@
-using AsyncDocumentProcessing.Api.Workers;
+
 using AsyncDocumentProcessing.Application.Interfaces;
 using AsyncDocumentProcessing.Application.Options;
 using AsyncDocumentProcessing.Application.Services;
@@ -6,6 +6,9 @@ using AsyncDocumentProcessing.Infrastructure.DependencyInjection;
 using AsyncDocumentProcessing.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using AsyncDocumentProcessing.Api.Middleware;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using AsyncDocumentProcessing.Application.Validators;
 
 using System;
 using Serilog;
@@ -26,6 +29,9 @@ builder.Host.UseSerilog();
 
 builder.Services.AddControllers();
 
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<UploadDocumentRequestValidator>();
+
 
 
 builder.Services.Configure<DocumentProcessingOptions>(
@@ -33,7 +39,6 @@ builder.Services.Configure<DocumentProcessingOptions>(
 
 builder.Services.AddScoped<IDocumentService, DocumentService>();
 
-builder.Services.AddHostedService<DocumentWorker>();
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
@@ -49,8 +54,7 @@ builder.Services.AddInfrastructure(
     builder.Configuration.GetConnectionString("DefaultConnection")!,
     Path.Combine(
         builder.Environment.ContentRootPath,
-        "Storage"),
-    queueCapacity: 1000);
+        "Storage"));
 
 var app = builder.Build();
 

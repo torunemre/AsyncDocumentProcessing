@@ -3,7 +3,6 @@ using AsyncDocumentProcessing.Infrastructure.OCR;
 using AsyncDocumentProcessing.Infrastructure.Persistence;
 using AsyncDocumentProcessing.Infrastructure.Persistence.Repositories;
 using AsyncDocumentProcessing.Infrastructure.Processing;
-using AsyncDocumentProcessing.Infrastructure.Queue;
 using AsyncDocumentProcessing.Infrastructure.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -21,8 +20,7 @@ namespace AsyncDocumentProcessing.Infrastructure.DependencyInjection
         public static IServiceCollection AddInfrastructure(
             this IServiceCollection services,
             string connectionString,
-            string storagePath,
-            int queueCapacity = 1000)
+            string storagePath)
         {
             services.AddDbContext<AppDbContext>(options =>
             {
@@ -38,8 +36,6 @@ namespace AsyncDocumentProcessing.Infrastructure.DependencyInjection
             services.AddSingleton<IFileStorage>(
                 new LocalFileStorage(storagePath));
 
-            services.AddSingleton<IDocumentQueue>(
-                new DocumentQueue(queueCapacity));
 
             return services;
         }

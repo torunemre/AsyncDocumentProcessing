@@ -14,16 +14,13 @@ namespace AsyncDocumentProcessing.Application.Services
     {
         private readonly IDocumentRepository _documentRepository;
         private readonly IFileStorage _fileStorage;
-        private readonly IDocumentQueue _documentQueue;
 
         public DocumentService(
-            IDocumentRepository documentRepository,
-            IFileStorage fileStorage,
-            IDocumentQueue documentQueue)
+    IDocumentRepository documentRepository,
+    IFileStorage fileStorage)
         {
             _documentRepository = documentRepository;
             _fileStorage = fileStorage;
-            _documentQueue = documentQueue;
         }
 
         public async Task<UploadDocumentResponse> UploadAsync(
@@ -44,9 +41,9 @@ namespace AsyncDocumentProcessing.Application.Services
                 Id = documentId,
                 FileName = fileName,
                 FilePath = filePath,
-                DocumentType = request.DocumentType,
-                BatchId = request.BatchId,
-                SourceSystem = request.SourceSystem,
+                DocumentType = request.DocumentType ?? string.Empty,
+                BatchId = request.BatchId ?? string.Empty,
+                SourceSystem = request.SourceSystem ?? string.Empty,
                 Status = DocumentStatus.Pending,
                 CreatedAt = DateTime.UtcNow
             };
@@ -55,9 +52,6 @@ namespace AsyncDocumentProcessing.Application.Services
                 document,
                 cancellationToken);
 
-            await _documentQueue.EnqueueAsync(
-                documentId,
-                cancellationToken);
 
             return new UploadDocumentResponse
             {

@@ -11,5 +11,9 @@ namespace AsyncDocumentProcessing.Application.Options
         public int MaxConcurrency { get; set; } = 3;
 
         public int MaxRetryCount { get; set; } = 3;
+
+        public int MaxFileSizeMb { get; set; } = 10;
+
+        public string[] AllowedExtensions { get; set; } =[];
     }
 }

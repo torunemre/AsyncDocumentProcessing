@@ -1,7 +1,11 @@
+using AsyncDocumentProcessing.Application.Options;
 using AsyncDocumentProcessing.Infrastructure.DependencyInjection;
 using AsyncDocumentProcessing.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
+
+builder.Services.Configure<DocumentProcessingOptions>(
+    builder.Configuration.GetSection("DocumentProcessing"));
 
 var connectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
@@ -14,13 +18,10 @@ var storagePath = Path.Combine(
 
 builder.Services.AddInfrastructure(
     connectionString,
-    storagePath,
-    queueCapacity: 1000);
-
-builder.Services.AddHostedService<Worker>();
-
+    storagePath);
 
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
+
 host.Run();
